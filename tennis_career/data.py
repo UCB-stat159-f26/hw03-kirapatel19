@@ -48,3 +48,60 @@ def _clean_matches(records, player_birth_date):
     return matches.dropna(
         subset=["match_date", "player_age", "opponent_age"]
     ).reset_index(drop=True)
+
+
+def _extract_birth_date(profile_text):
+    """Find the player's birthday on their profile."""
+    match = re.search(r"var dob = (\d{8});", profile_text)
+
+    if match is None:
+        raise ValueError("Player birth date not found. Check the player name.")
+
+    birthday = pd.to_datetime(match.group(1), format="%Y%m%d", errors="coerce")
+
+    if pd.isna(birthday):
+        raise ValueError("The player's birth date is invalid.")
+
+    return birthday
+
+def _format_player_name(player_name):
+    """Format a player name for the website."""
+    if not isinstance(player_name, str) or not player_name.strip():
+        raise ValueError("Please enter a player's name.")
+
+    words = player_name.split()
+
+    if len(words) > 1:
+        return "".join(word.capitalize() for word in words)
+
+    return words[0]
+
+def _download_text(url):
+    """Download text and report missing pages or connection problems."""
+    try:
+        response = requests.get(url, timeout=30)
+        if response.status_code == 404:
+            raise ValueError("Player data not found. Check the player name.")
+        response.raise_for_status()
+    except requests.RequestException as error:
+        raise ConnectionError("Could not download data from Tennis Abstract.") from error
+    return response.text
+
+
+def get_player_matches(player_name):
+    """Download and clean a player's career matches."""
+    name = _format_player_name(player_name)
+    base_url = "https://www.tennisabstract.com"
+
+    profile = _download_text(f"{base_url}/cgi-bin/player.cgi?p={name}")
+    birthday = _extract_birth_date(profile)
+
+    career = _download_text(f"{base_url}/jsmatches/{name}Career.js")
+    records = _extract_matches(career)
+    matches = _clean_matches(records, birthday)
+
+    if matches.empty:
+        raise ValueError("No matches with usable age data were found.")
+
+    matches.attrs["player_name"] = player_name
+    return matches
